@@ -85,21 +85,27 @@ def get_available_sources(config: Dict[str, Any]) -> str:
 
 
 def get_missing_keys(config: Dict[str, Any]) -> str:
-    """Determine which API keys are missing.
+    """Determine which sources are missing (accounting for Bird).
 
     Returns: 'both', 'reddit', 'x', or 'none'
     """
     has_openai = bool(config.get('OPENAI_API_KEY'))
     has_xai = bool(config.get('XAI_API_KEY'))
 
-    if has_openai and has_xai:
+    # Check if Bird provides X access (import here to avoid circular dependency)
+    from . import bird_x
+    has_bird = bird_x.is_bird_installed() and bird_x.is_bird_authenticated()
+
+    has_x = has_xai or has_bird
+
+    if has_openai and has_x:
         return 'none'
     elif has_openai:
-        return 'x'  # Missing xAI key
-    elif has_xai:
+        return 'x'  # Missing X source
+    elif has_x:
         return 'reddit'  # Missing OpenAI key
     else:
-        return 'both'  # Missing both keys
+        return 'both'  # Missing both
 
 
 def validate_sources(requested: str, available: str, include_web: bool = False) -> tuple[str, Optional[str]]:

@@ -26,8 +26,6 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from typing import Optional
-
 from lib import (
     bird_x,
     dates,
@@ -45,47 +43,6 @@ from lib import (
     websearch,
     xai_x,
 )
-
-
-def setup_bird_if_needed(progress: ui.ProgressDisplay) -> Optional[str]:
-    """Check Bird status and offer installation if needed.
-
-    Returns:
-        'bird' if Bird is ready to use,
-        'declined' if user declined install,
-        None if Bird not available and couldn't be installed.
-    """
-    status = bird_x.get_bird_status()
-
-    # Already working
-    if status["authenticated"]:
-        return 'bird'
-
-    # Installed but not authenticated
-    if status["installed"]:
-        progress.show_bird_auth_help()
-        return None
-
-    # Not installed - offer to install if npm available
-    if status["can_install"]:
-        if progress.prompt_bird_install():
-            success, message = bird_x.install_bird()
-            if success:
-                # Check if auth works now
-                username = bird_x.is_bird_authenticated()
-                if username:
-                    progress.show_bird_install_success(username)
-                    return 'bird'
-                else:
-                    progress.show_bird_auth_help()
-                    return None
-            else:
-                progress.show_bird_install_failed(message)
-                return None
-        else:
-            return 'declined'
-
-    return None
 
 
 def load_fixture(name: str) -> dict:
@@ -405,33 +362,23 @@ def main():
     else:
         depth = "default"
 
-    # Load config first to check Bird availability
-    config = env.get_config()
-
-    # Check Bird availability and offer install if needed (before topic validation)
-    x_source_status = env.get_x_source_status(config)
-    x_source = x_source_status["source"]
-
-    # If no X source and Bird can be installed, offer it
-    if x_source is None and x_source_status["can_install_bird"]:
-        # Create minimal progress for Bird prompts (no topic yet)
-        temp_progress = ui.ProgressDisplay("setup", show_banner=False)
-        bird_result = setup_bird_if_needed(temp_progress)
-        if bird_result == 'bird':
-            x_source = 'bird'
-            # Refresh status
-            x_source_status = env.get_x_source_status(config)
-
-    # Now validate topic
+    # Validate topic first (matches original NUX)
     if not args.topic:
         print("Error: Please provide a topic to research.", file=sys.stderr)
         print("Usage: python3 last30days.py <topic> [options]", file=sys.stderr)
         sys.exit(1)
 
+    # Load config
+    config = env.get_config()
+
+    # Auto-detect Bird (no prompts - just use it if available)
+    x_source_status = env.get_x_source_status(config)
+    x_source = x_source_status["source"]  # 'bird', 'xai', or None
+
     # Initialize progress display with topic
     progress = ui.ProgressDisplay(args.topic, show_banner=True)
 
-    # Check available sources (now accounting for Bird)
+    # Check available sources (accounting for Bird auto-detection)
     available = env.get_available_sources(config)
 
     # Override available if Bird is ready

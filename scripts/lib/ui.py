@@ -84,13 +84,14 @@ PROMO_MESSAGE = f"""
 {Colors.YELLOW}{Colors.BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{Colors.RESET}
 {Colors.YELLOW}⚡ UNLOCK THE FULL POWER OF /last30days{Colors.RESET}
 
-{Colors.DIM}Right now you're using web search only. Add API keys to unlock:{Colors.RESET}
+{Colors.DIM}Right now you're using web search only. Unlock more sources:{Colors.RESET}
 
   {Colors.YELLOW}🟠 Reddit{Colors.RESET} - Real upvotes, comments, and community insights
      └─ Add OPENAI_API_KEY (uses OpenAI's web_search for Reddit)
 
   {Colors.CYAN}🔵 X (Twitter){Colors.RESET} - Real-time posts, likes, reposts from creators
-     └─ Add XAI_API_KEY (uses xAI's live X search)
+     └─ {Colors.GREEN}FREE:{Colors.RESET} npm install -g @steipete/bird {Colors.DIM}(uses browser session){Colors.RESET}
+     └─ {Colors.DIM}Or:{Colors.RESET} Add XAI_API_KEY (paid API)
 
 {Colors.DIM}Setup:{Colors.RESET} Edit {Colors.BOLD}~/.config/last30days/.env{Colors.RESET}
 {Colors.YELLOW}{Colors.BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{Colors.RESET}
@@ -100,13 +101,14 @@ PROMO_MESSAGE_PLAIN = """
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚡ UNLOCK THE FULL POWER OF /last30days
 
-Right now you're using web search only. Add API keys to unlock:
+Right now you're using web search only. Unlock more sources:
 
   🟠 Reddit - Real upvotes, comments, and community insights
      └─ Add OPENAI_API_KEY (uses OpenAI's web_search for Reddit)
 
   🔵 X (Twitter) - Real-time posts, likes, reposts from creators
-     └─ Add XAI_API_KEY (uses xAI's live X search)
+     └─ FREE: npm install -g @steipete/bird (uses browser session)
+     └─ Or: Add XAI_API_KEY (paid API)
 
 Setup: Edit ~/.config/last30days/.env
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -118,13 +120,15 @@ PROMO_SINGLE_KEY = {
 {Colors.DIM}💡 Tip: Add {Colors.YELLOW}OPENAI_API_KEY{Colors.RESET}{Colors.DIM} to ~/.config/last30days/.env for Reddit data with real engagement metrics!{Colors.RESET}
 """,
     "x": f"""
-{Colors.DIM}💡 Tip: Add {Colors.CYAN}XAI_API_KEY{Colors.RESET}{Colors.DIM} to ~/.config/last30days/.env for X/Twitter data with real likes & reposts!{Colors.RESET}
+{Colors.DIM}💡 Tip: For X/Twitter data with real likes & reposts:{Colors.RESET}
+   {Colors.GREEN}FREE:{Colors.RESET} npm install -g @steipete/bird {Colors.DIM}(uses browser session){Colors.RESET}
+   {Colors.DIM}Or: Add XAI_API_KEY to ~/.config/last30days/.env{Colors.RESET}
 """,
 }
 
 PROMO_SINGLE_KEY_PLAIN = {
     "reddit": "\n💡 Tip: Add OPENAI_API_KEY to ~/.config/last30days/.env for Reddit data with real engagement metrics!\n",
-    "x": "\n💡 Tip: Add XAI_API_KEY to ~/.config/last30days/.env for X/Twitter data with real likes & reposts!\n",
+    "x": "\n💡 Tip: For X/Twitter data with real likes & reposts:\n   FREE: npm install -g @steipete/bird (uses browser session)\n   Or: Add XAI_API_KEY to ~/.config/last30days/.env\n",
 }
 
 # Bird CLI prompts
