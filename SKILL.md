@@ -38,9 +38,16 @@ Common patterns:
 - `TARGET_TOOL = [extracted tool, or "unknown" if not specified]`
 - `QUERY_TYPE = [RECOMMENDATIONS | NEWS | HOW-TO | GENERAL]`
 
-**Then output a brief acknowledgment before starting:**
+**Then output this progress block to the user (copy format exactly, fill in TOPIC):**
 
-> Researching **{TOPIC}** — searching Reddit for upvotes and comments, X for likes and reposts, and the web for recent coverage. Hang tight...
+```
+🔍 **{TOPIC}**
+
+Deploying research agents:
+🟠 Reddit — scanning subreddits for upvotes and comments...
+🔵 X — reading posts for likes and reposts...
+🌐 Web — searching blogs, docs, and news...
+```
 
 **Then immediately run the research script:**
 
