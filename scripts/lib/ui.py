@@ -414,6 +414,108 @@ class ProgressDisplay:
         sys.stderr.flush()
 
 
+def show_diagnostic_banner(diag: dict):
+    """Show pre-flight source status banner when sources are missing.
+
+    Args:
+        diag: Dict from env diagnostics with keys:
+            openai, xai, x_source, bird_installed, bird_authenticated,
+            bird_username, youtube, web_search_backend
+    """
+    has_openai = diag.get("openai", False)
+    has_x = diag.get("x_source") is not None
+    has_youtube = diag.get("youtube", False)
+    has_web = diag.get("web_search_backend") is not None
+
+    # If everything is available, no banner needed
+    if has_openai and has_x and has_youtube and has_web:
+        return
+
+    lines = []
+
+    if IS_TTY:
+        lines.append(f"{Colors.DIM}┌─────────────────────────────────────────────────────┐{Colors.RESET}")
+        lines.append(f"{Colors.DIM}│{Colors.RESET} {Colors.BOLD}/last30days v2.1 — Source Status{Colors.RESET}                    {Colors.DIM}│{Colors.RESET}")
+        lines.append(f"{Colors.DIM}│{Colors.RESET}                                                     {Colors.DIM}│{Colors.RESET}")
+
+        # Reddit
+        if has_openai:
+            lines.append(f"{Colors.DIM}│{Colors.RESET}  {Colors.GREEN}✅ Reddit{Colors.RESET}    — OPENAI_API_KEY found                {Colors.DIM}│{Colors.RESET}")
+        else:
+            lines.append(f"{Colors.DIM}│{Colors.RESET}  {Colors.RED}❌ Reddit{Colors.RESET}    — No OPENAI_API_KEY                    {Colors.DIM}│{Colors.RESET}")
+            lines.append(f"{Colors.DIM}│{Colors.RESET}     └─ Add to ~/.config/last30days/.env            {Colors.DIM}│{Colors.RESET}")
+
+        # X/Twitter
+        if has_x:
+            source = diag.get("x_source", "")
+            username = diag.get("bird_username", "")
+            label = f"Bird ({username})" if source == "bird" and username else source.upper()
+            lines.append(f"{Colors.DIM}│{Colors.RESET}  {Colors.GREEN}✅ X/Twitter{Colors.RESET} — {label}                          {Colors.DIM}│{Colors.RESET}")
+        else:
+            lines.append(f"{Colors.DIM}│{Colors.RESET}  {Colors.RED}❌ X/Twitter{Colors.RESET} — No Bird CLI or XAI_API_KEY          {Colors.DIM}│{Colors.RESET}")
+            if diag.get("bird_installed"):
+                lines.append(f"{Colors.DIM}│{Colors.RESET}     └─ Bird installed but not authenticated         {Colors.DIM}│{Colors.RESET}")
+                lines.append(f"{Colors.DIM}│{Colors.RESET}     └─ Log into x.com in your browser, then retry   {Colors.DIM}│{Colors.RESET}")
+            else:
+                lines.append(f"{Colors.DIM}│{Colors.RESET}     └─ Needs Node.js 22+ (Bird is bundled)           {Colors.DIM}│{Colors.RESET}")
+
+        # YouTube
+        if has_youtube:
+            lines.append(f"{Colors.DIM}│{Colors.RESET}  {Colors.GREEN}✅ YouTube{Colors.RESET}   — yt-dlp found                      {Colors.DIM}│{Colors.RESET}")
+        else:
+            lines.append(f"{Colors.DIM}│{Colors.RESET}  {Colors.RED}❌ YouTube{Colors.RESET}   — yt-dlp not installed                {Colors.DIM}│{Colors.RESET}")
+            lines.append(f"{Colors.DIM}│{Colors.RESET}     └─ Fix: brew install yt-dlp (free)                {Colors.DIM}│{Colors.RESET}")
+
+        # Web
+        if has_web:
+            backend = diag.get("web_search_backend", "")
+            lines.append(f"{Colors.DIM}│{Colors.RESET}  {Colors.GREEN}✅ Web{Colors.RESET}       — {backend} API                       {Colors.DIM}│{Colors.RESET}")
+        else:
+            lines.append(f"{Colors.DIM}│{Colors.RESET}  {Colors.YELLOW}⚡ Web{Colors.RESET}       — Using assistant's search tool       {Colors.DIM}│{Colors.RESET}")
+
+        lines.append(f"{Colors.DIM}│{Colors.RESET}                                                     {Colors.DIM}│{Colors.RESET}")
+        lines.append(f"{Colors.DIM}│{Colors.RESET}  Config: {Colors.BOLD}~/.config/last30days/.env{Colors.RESET}                  {Colors.DIM}│{Colors.RESET}")
+        lines.append(f"{Colors.DIM}└─────────────────────────────────────────────────────┘{Colors.RESET}")
+    else:
+        # Plain text for non-TTY (Claude Code / Codex)
+        lines.append("┌─────────────────────────────────────────────────────┐")
+        lines.append("│ /last30days v2.1 — Source Status                    │")
+        lines.append("│                                                     │")
+
+        if has_openai:
+            lines.append("│  ✅ Reddit    — OPENAI_API_KEY found                │")
+        else:
+            lines.append("│  ❌ Reddit    — No OPENAI_API_KEY                    │")
+            lines.append("│     └─ Add to ~/.config/last30days/.env            │")
+
+        if has_x:
+            lines.append("│  ✅ X/Twitter — available                            │")
+        else:
+            lines.append("│  ❌ X/Twitter — No Bird CLI or XAI_API_KEY          │")
+            if diag.get("bird_installed"):
+                lines.append("│     └─ Log into x.com in your browser, then retry   │")
+            else:
+                lines.append("│     └─ Needs Node.js 22+ (Bird is bundled)           │")
+
+        if has_youtube:
+            lines.append("│  ✅ YouTube   — yt-dlp found                        │")
+        else:
+            lines.append("│  ❌ YouTube   — yt-dlp not installed                │")
+            lines.append("│     └─ Fix: brew install yt-dlp (free)                │")
+
+        if has_web:
+            lines.append("│  ✅ Web       — API search available                │")
+        else:
+            lines.append("│  ⚡ Web       — Using assistant's search tool       │")
+
+        lines.append("│                                                     │")
+        lines.append("│  Config: ~/.config/last30days/.env                  │")
+        lines.append("└─────────────────────────────────────────────────────┘")
+
+    sys.stderr.write("\n".join(lines) + "\n\n")
+    sys.stderr.flush()
+
+
 def print_phase(phase: str, message: str):
     """Print a phase message."""
     colors = {

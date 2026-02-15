@@ -5,6 +5,8 @@ via Twitter's GraphQL API. No external `bird` CLI binary needed - just Node.js 2
 """
 
 import json
+import os
+import signal
 import shutil
 import subprocess
 import sys
@@ -175,26 +177,52 @@ def _run_bird_search(query: str, count: int, timeout: int) -> Dict[str, Any]:
         "--json",
     ]
 
+    # Use process groups for clean cleanup on timeout/kill
+    preexec = os.setsid if hasattr(os, 'setsid') else None
+
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout,
+            preexec_fn=preexec,
         )
 
-        if result.returncode != 0:
-            error = result.stderr.strip() or "Bird search failed"
+        # Register for cleanup tracking (if available)
+        try:
+            from last30days import register_child_pid, unregister_child_pid
+            register_child_pid(proc.pid)
+        except ImportError:
+            pass
+
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # Kill the entire process group
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                proc.kill()
+            proc.wait(timeout=5)
+            return {"error": f"Search timed out after {timeout}s", "items": []}
+        finally:
+            try:
+                from last30days import unregister_child_pid
+                unregister_child_pid(proc.pid)
+            except (ImportError, Exception):
+                pass
+
+        if proc.returncode != 0:
+            error = stderr.strip() if stderr else "Bird search failed"
             return {"error": error, "items": []}
 
-        output = result.stdout.strip()
+        output = stdout.strip() if stdout else ""
         if not output:
             return {"items": []}
 
         return json.loads(output)
 
-    except subprocess.TimeoutExpired:
-        return {"error": "Search timed out", "items": []}
     except json.JSONDecodeError as e:
         return {"error": f"Invalid JSON response: {e}", "items": []}
     except Exception as e:
@@ -276,19 +304,33 @@ def search_handles(
             "--json",
         ]
 
+        preexec = os.setsid if hasattr(os, 'setsid') else None
+
         try:
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=15,  # Short timeout per handle
+                preexec_fn=preexec,
             )
 
-            if result.returncode != 0:
-                _log(f"Handle search failed for @{handle}: {result.stderr.strip()}")
+            try:
+                stdout, stderr = proc.communicate(timeout=15)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                except (ProcessLookupError, PermissionError, OSError):
+                    proc.kill()
+                proc.wait(timeout=5)
+                _log(f"Handle search timed out for @{handle}")
                 continue
 
-            output = result.stdout.strip()
+            if proc.returncode != 0:
+                _log(f"Handle search failed for @{handle}: {(stderr or '').strip()}")
+                continue
+
+            output = (stdout or "").strip()
             if not output:
                 continue
 
@@ -296,8 +338,6 @@ def search_handles(
             items = parse_bird_response(response)
             all_items.extend(items)
 
-        except subprocess.TimeoutExpired:
-            _log(f"Handle search timed out for @{handle}")
         except json.JSONDecodeError:
             _log(f"Invalid JSON from handle search for @{handle}")
         except Exception as e:

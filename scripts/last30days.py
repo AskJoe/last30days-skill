@@ -17,9 +17,12 @@ Options:
 """
 
 import argparse
+import atexit
 import json
 import os
+import signal
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +30,69 @@ from pathlib import Path
 # Add lib to path
 SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(SCRIPT_DIR))
+
+# ---------------------------------------------------------------------------
+# Global timeout & child process management
+# ---------------------------------------------------------------------------
+_child_pids: set = set()
+_child_pids_lock = threading.Lock()
+
+TIMEOUT_PROFILES = {
+    "quick":   {"global": 90,  "future": 30, "http": 15, "enrich_per": 8,  "enrich_total": 30, "enrich_max_items": 10},
+    "default": {"global": 180, "future": 60, "http": 30, "enrich_per": 15, "enrich_total": 45, "enrich_max_items": 15},
+    "deep":    {"global": 300, "future": 90, "http": 30, "enrich_per": 15, "enrich_total": 60, "enrich_max_items": 25},
+}
+
+
+def register_child_pid(pid: int):
+    """Track a child process for cleanup."""
+    with _child_pids_lock:
+        _child_pids.add(pid)
+
+
+def unregister_child_pid(pid: int):
+    """Remove a child process from tracking."""
+    with _child_pids_lock:
+        _child_pids.discard(pid)
+
+
+def _cleanup_children():
+    """Kill all tracked child processes."""
+    with _child_pids_lock:
+        pids = list(_child_pids)
+    for pid in pids:
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+
+
+atexit.register(_cleanup_children)
+
+
+def _install_global_timeout(timeout_seconds: int):
+    """Install a global timeout watchdog.
+
+    Uses SIGALRM on Unix, threading.Timer as fallback.
+    """
+    if hasattr(signal, 'SIGALRM'):
+        def _handler(signum, frame):
+            sys.stderr.write(f"\n[TIMEOUT] Global timeout ({timeout_seconds}s) exceeded. Cleaning up.\n")
+            sys.stderr.flush()
+            _cleanup_children()
+            sys.exit(1)
+        signal.signal(signal.SIGALRM, _handler)
+        signal.alarm(timeout_seconds)
+    else:
+        # Windows fallback
+        def _watchdog():
+            sys.stderr.write(f"\n[TIMEOUT] Global timeout ({timeout_seconds}s) exceeded. Cleaning up.\n")
+            sys.stderr.flush()
+            _cleanup_children()
+            os._exit(1)
+        timer = threading.Timer(timeout_seconds, _watchdog)
+        timer.daemon = True
+        timer.start()
 
 from lib import (
     bird_x,
@@ -384,22 +450,26 @@ def _run_supplemental(
 
         if reddit_future:
             try:
-                raw_reddit = reddit_future.result()
+                raw_reddit = reddit_future.result(timeout=30)
                 # Filter out URLs already found in Phase 1
                 supplemental_reddit = [
                     item for item in raw_reddit
                     if item.get("url", "") not in existing_urls
                 ]
+            except TimeoutError:
+                sys.stderr.write("[Phase 2] Supplemental Reddit timed out (30s)\n")
             except Exception as e:
                 sys.stderr.write(f"[Phase 2] Supplemental Reddit error: {e}\n")
 
         if x_future:
             try:
-                raw_x = x_future.result()
+                raw_x = x_future.result(timeout=30)
                 supplemental_x = [
                     item for item in raw_x
                     if item.get("url", "") not in existing_urls
                 ]
+            except TimeoutError:
+                sys.stderr.write("[Phase 2] Supplemental X timed out (30s)\n")
             except Exception as e:
                 sys.stderr.write(f"[Phase 2] Supplemental X error: {e}\n")
 
@@ -424,6 +494,7 @@ def run_research(
     progress: ui.ProgressDisplay = None,
     x_source: str = "xai",
     run_youtube: bool = False,
+    timeouts: dict = None,
 ) -> tuple:
     """Run the research pipeline.
 
@@ -436,6 +507,10 @@ def run_research(
     (i.e., no native web search API keys are configured). When native web search
     runs, web_items will be populated and web_needed will be False.
     """
+    if timeouts is None:
+        timeouts = TIMEOUT_PROFILES[depth]
+    future_timeout = timeouts["future"]
+
     reddit_items = []
     x_items = []
     youtube_items = []
@@ -533,12 +608,16 @@ def run_research(
                 _search_web, topic, config, from_date, to_date, depth
             )
 
-        # Collect results
+        # Collect results (with timeouts to prevent indefinite blocking)
         if reddit_future:
             try:
-                reddit_items, raw_openai, reddit_error = reddit_future.result()
+                reddit_items, raw_openai, reddit_error = reddit_future.result(timeout=future_timeout)
                 if reddit_error and progress:
                     progress.show_error(f"Reddit error: {reddit_error}")
+            except TimeoutError:
+                reddit_error = f"Reddit search timed out after {future_timeout}s"
+                if progress:
+                    progress.show_error(reddit_error)
             except Exception as e:
                 reddit_error = f"{type(e).__name__}: {e}"
                 if progress:
@@ -548,9 +627,13 @@ def run_research(
 
         if x_future:
             try:
-                x_items, raw_xai, x_error = x_future.result()
+                x_items, raw_xai, x_error = x_future.result(timeout=future_timeout)
                 if x_error and progress:
                     progress.show_error(f"X error: {x_error}")
+            except TimeoutError:
+                x_error = f"X search timed out after {future_timeout}s"
+                if progress:
+                    progress.show_error(x_error)
             except Exception as e:
                 x_error = f"{type(e).__name__}: {e}"
                 if progress:
@@ -560,9 +643,13 @@ def run_research(
 
         if youtube_future:
             try:
-                youtube_items, youtube_error = youtube_future.result()
+                youtube_items, youtube_error = youtube_future.result(timeout=future_timeout)
                 if youtube_error and progress:
                     progress.show_error(f"YouTube error: {youtube_error}")
+            except TimeoutError:
+                youtube_error = f"YouTube search timed out after {future_timeout}s"
+                if progress:
+                    progress.show_error(youtube_error)
             except Exception as e:
                 youtube_error = f"{type(e).__name__}: {e}"
                 if progress:
@@ -572,9 +659,13 @@ def run_research(
 
         if web_future:
             try:
-                web_items, web_error = web_future.result()
+                web_items, web_error = web_future.result(timeout=future_timeout)
                 if web_error and progress:
                     progress.show_error(f"Web error: {web_error}")
+            except TimeoutError:
+                web_error = f"Web search timed out after {future_timeout}s"
+                if progress:
+                    progress.show_error(web_error)
             except Exception as e:
                 web_error = f"{type(e).__name__}: {e}"
                 if progress:
@@ -582,27 +673,59 @@ def run_research(
             sys.stderr.write(f"[web] {len(web_items)} results\n")
             sys.stderr.flush()
 
-    # Enrich Reddit items with real data (sequential, but with error handling per-item)
-    if reddit_items:
+    # Enrich Reddit items with real data (parallel, capped)
+    enrich_max = timeouts["enrich_max_items"]
+    enrich_total_timeout = timeouts["enrich_total"]
+    items_to_enrich = reddit_items[:enrich_max]
+
+    if items_to_enrich:
         if progress:
-            progress.start_reddit_enrich(1, len(reddit_items))
+            progress.start_reddit_enrich(1, len(items_to_enrich))
 
-        for i, item in enumerate(reddit_items):
-            if progress and i > 0:
-                progress.update_reddit_enrich(i + 1, len(reddit_items))
-
-            try:
-                if mock:
+        if mock:
+            # Sequential mock enrichment (fast, no need for parallelism)
+            for i, item in enumerate(items_to_enrich):
+                if progress and i > 0:
+                    progress.update_reddit_enrich(i + 1, len(items_to_enrich))
+                try:
                     mock_thread = load_fixture("reddit_thread_sample.json")
                     reddit_items[i] = reddit_enrich.enrich_reddit_item(item, mock_thread)
-                else:
-                    reddit_items[i] = reddit_enrich.enrich_reddit_item(item)
-            except Exception as e:
-                # Log but don't crash - keep the unenriched item
-                if progress:
-                    progress.show_error(f"Enrich failed for {item.get('url', 'unknown')}: {e}")
-
-            raw_reddit_enriched.append(reddit_items[i])
+                except Exception as e:
+                    if progress:
+                        progress.show_error(f"Enrich failed for {item.get('url', 'unknown')}: {e}")
+                raw_reddit_enriched.append(reddit_items[i])
+        else:
+            # Parallel enrichment with bounded concurrency and total timeout
+            completed_count = 0
+            with ThreadPoolExecutor(max_workers=5) as enrich_pool:
+                futures = {
+                    enrich_pool.submit(reddit_enrich.enrich_reddit_item, item): i
+                    for i, item in enumerate(items_to_enrich)
+                }
+                try:
+                    for future in as_completed(futures, timeout=enrich_total_timeout):
+                        idx = futures[future]
+                        completed_count += 1
+                        if progress:
+                            progress.update_reddit_enrich(completed_count, len(items_to_enrich))
+                        try:
+                            reddit_items[idx] = future.result(timeout=timeouts["enrich_per"])
+                        except Exception as e:
+                            if progress:
+                                progress.show_error(
+                                    f"Enrich failed for {items_to_enrich[idx].get('url', 'unknown')}: {e}"
+                                )
+                        raw_reddit_enriched.append(reddit_items[idx])
+                except TimeoutError:
+                    if progress:
+                        progress.show_error(
+                            f"Enrichment timed out after {enrich_total_timeout}s "
+                            f"({completed_count}/{len(items_to_enrich)} done)"
+                        )
+                    # Keep unenriched items as-is
+                    for idx in futures.values():
+                        if reddit_items[idx] not in raw_reddit_enriched:
+                            raw_reddit_enriched.append(reddit_items[idx])
 
         if progress:
             progress.end_reddit_enrich()
@@ -683,6 +806,13 @@ def main():
         action="store_true",
         help="Show source availability diagnostics and exit",
     )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=None,
+        metavar="SECS",
+        help="Global timeout in seconds (default: 180, quick: 90, deep: 300)",
+    )
 
     args = parser.parse_args()
 
@@ -703,6 +833,11 @@ def main():
         depth = "deep"
     else:
         depth = "default"
+
+    # Install global timeout watchdog
+    timeouts = TIMEOUT_PROFILES[depth]
+    global_timeout = args.timeout or timeouts["global"]
+    _install_global_timeout(global_timeout)
 
     # Load config
     config = env.get_config()
@@ -741,6 +876,20 @@ def main():
 
     # Initialize progress display with topic
     progress = ui.ProgressDisplay(args.topic, show_banner=True)
+
+    # Show diagnostic banner when sources are missing
+    web_source = env.get_web_search_source(config)
+    diag = {
+        "openai": bool(config.get("OPENAI_API_KEY")),
+        "xai": bool(config.get("XAI_API_KEY")),
+        "x_source": x_source_status["source"],
+        "bird_installed": x_source_status["bird_installed"],
+        "bird_authenticated": x_source_status["bird_authenticated"],
+        "bird_username": x_source_status.get("bird_username"),
+        "youtube": has_ytdlp,
+        "web_search_backend": web_source,
+    }
+    ui.show_diagnostic_banner(diag)
 
     # Check available sources (accounting for Bird auto-detection)
     available = env.get_available_sources(config)
@@ -827,6 +976,7 @@ def main():
         progress,
         x_source=x_source or "xai",
         run_youtube=has_ytdlp,
+        timeouts=timeouts,
     )
 
     # Processing phase
@@ -902,8 +1052,22 @@ def main():
     else:
         progress.show_complete(len(deduped_reddit), len(deduped_x), len(deduped_youtube))
 
+    # Build source info for status footer
+    source_info = {}
+    if not bool(config.get("OPENAI_API_KEY")):
+        source_info["reddit_skip_reason"] = "No OPENAI_API_KEY (add to ~/.config/last30days/.env)"
+    if not x_source:
+        if x_source_status["bird_installed"]:
+            source_info["x_skip_reason"] = "Bird installed but not authenticated — log into x.com in browser"
+        else:
+            source_info["x_skip_reason"] = "No Bird CLI or XAI_API_KEY (Node.js 22+ needed for Bird)"
+    if not has_ytdlp:
+        source_info["youtube_skip_reason"] = "yt-dlp not installed — fix: brew install yt-dlp"
+    if not web_source:
+        source_info["web_skip_reason"] = "assistant will use WebSearch (add BRAVE_API_KEY for native search)"
+
     # Output result
-    output_result(report, args.emit, web_needed, args.topic, from_date, to_date, missing_keys, args.days)
+    output_result(report, args.emit, web_needed, args.topic, from_date, to_date, missing_keys, args.days, source_info)
 
     # Persist findings to SQLite if requested
     if args.store:
@@ -977,10 +1141,13 @@ def output_result(
     to_date: str = "",
     missing_keys: str = "none",
     days: int = 30,
+    source_info: dict = None,
 ):
     """Output the result based on emit mode."""
     if emit_mode == "compact":
         print(render.render_compact(report, missing_keys=missing_keys))
+        # Append source status footer
+        print(render.render_source_status(report, source_info))
     elif emit_mode == "json":
         print(json.dumps(report.to_dict(), indent=2))
     elif emit_mode == "md":

@@ -238,6 +238,69 @@ def render_compact(report: schema.Report, limit: int = 15, missing_keys: str = "
     return "\n".join(lines)
 
 
+def render_source_status(report: schema.Report, source_info: dict = None) -> str:
+    """Render source status footer showing what was used/skipped and why.
+
+    Args:
+        report: Report data
+        source_info: Dict with source availability info:
+            x_skip_reason, youtube_skip_reason, web_skip_reason
+
+    Returns:
+        Source status markdown string
+    """
+    if source_info is None:
+        source_info = {}
+
+    lines = []
+    lines.append("---")
+    lines.append("**Sources:**")
+
+    # Reddit
+    if report.reddit_error:
+        lines.append(f"  ❌ Reddit: error — {report.reddit_error}")
+    elif report.reddit:
+        lines.append(f"  ✅ Reddit: {len(report.reddit)} threads")
+    elif report.mode in ("both", "reddit-only", "all", "reddit-web"):
+        lines.append("  ⚠️ Reddit: 0 threads found")
+    else:
+        reason = source_info.get("reddit_skip_reason", "not configured")
+        lines.append(f"  ⏭️ Reddit: skipped — {reason}")
+
+    # X
+    if report.x_error:
+        lines.append(f"  ❌ X: error — {report.x_error}")
+    elif report.x:
+        lines.append(f"  ✅ X: {len(report.x)} posts")
+    elif report.mode in ("both", "x-only", "all", "x-web"):
+        lines.append("  ⚠️ X: 0 posts found")
+    else:
+        reason = source_info.get("x_skip_reason", "No Bird CLI or XAI_API_KEY")
+        lines.append(f"  ⏭️ X: skipped — {reason}")
+
+    # YouTube
+    if report.youtube_error:
+        lines.append(f"  ❌ YouTube: error — {report.youtube_error}")
+    elif report.youtube:
+        with_transcripts = sum(1 for v in report.youtube if getattr(v, 'transcript_snippet', None))
+        lines.append(f"  ✅ YouTube: {len(report.youtube)} videos ({with_transcripts} with transcripts)")
+    else:
+        reason = source_info.get("youtube_skip_reason", "yt-dlp not installed (brew install yt-dlp)")
+        lines.append(f"  ⏭️ YouTube: skipped — {reason}")
+
+    # Web
+    if report.web_error:
+        lines.append(f"  ❌ Web: error — {report.web_error}")
+    elif report.web:
+        lines.append(f"  ✅ Web: {len(report.web)} pages")
+    else:
+        reason = source_info.get("web_skip_reason", "assistant will use WebSearch")
+        lines.append(f"  ⚡ Web: {reason}")
+
+    lines.append("")
+    return "\n".join(lines)
+
+
 def render_context_snippet(report: schema.Report) -> str:
     """Render reusable context snippet.
 
